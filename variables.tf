@@ -1,43 +1,54 @@
-variable "activation_token" {
-  description = "One-time JWT activation token signed by Fortinet's control_service, specific to THIS region's scan_engine. The appliance reads it from EC2 user-data on first boot and seeds /var/log/scan_engine/scan_engine_config.json. Single-use — request a fresh token from Fortinet if EC2 is rebuilt. Carries tenant_id, the WSS server URL, and the control_service URL as claims. Baked into the deployment bundle by Fortinet; you should not need to edit it."
-  type        = string
-  sensitive   = true
+# ---------------------------------------------------------------------------
+# FortiCNAPP integration
+#
+# One module instance per region. The instance with global = true creates the
+# lacework_integration_aws_fortidspm resource, which registers the account with
+# FortiCNAPP and receives from FortiDSPM one single-use activation token and one
+# AMI per region. Every other instance points global_module_reference at that
+# module and reads its own region's token and AMI from it.
+# ---------------------------------------------------------------------------
+variable "global" {
+  description = "Create the FortiCNAPP DSPM integration in this module instance. Exactly one instance per deployment sets this."
+  type        = bool
+  default     = false
+}
 
-  validation {
-    condition     = length(var.activation_token) > 20
-    error_message = "activation_token looks too short to be a valid JWT."
+variable "global_module_reference" {
+  description = "The module instance that has global = true, passed whole (module.<name>). Required when global = false."
+  type = object({
+    lacework_integration_guid = string
+    deployment_id             = string
+    deployment_name           = string
+    env_id                    = string
+    activation_tokens         = map(string)
+    image_ids                 = map(string)
+  })
+  default = {
+    lacework_integration_guid = ""
+    deployment_id             = ""
+    deployment_name           = ""
+    env_id                    = ""
+    activation_tokens         = {}
+    image_ids                 = {}
   }
 }
 
-variable "aws_region" {
-  description = "AWS region this module instance deploys into. Set by the root from the provider it passes in; used for the S3 gateway endpoint service name and messages."
-  type        = string
+variable "regions" {
+  description = "Every region a scan engine is deployed in, including this one. Used only by the global instance; FortiDSPM issues one token and AMI per entry."
+  type        = list(string)
+  default     = []
 }
 
-variable "ami_id" {
-  description = "BYOL AMI ID for this region. Fortinet bakes the correct AMI per region into the generated root main.tf and passes it here. AMI IDs are region-specific, so each region gets its own."
+variable "lacework_integration_name" {
+  description = "Name of the FortiCNAPP DSPM integration. Used only by the global instance."
   type        = string
-
-  validation {
-    condition     = can(regex("^ami-[0-9a-f]+$", var.ami_id))
-    error_message = "ami_id must look like ami-xxxxxxxxxxxxxxxxx."
-  }
+  default     = "aws-fortidspm"
 }
 
-variable "deployment_name" {
-  description = "Human-readable storage-profile name this scan_engine belongs to. Baked whole into every resource's fortidspm:deployment_name tag; a sanitized, 15-char-capped form is used in resource names (replacing the old random suffix)."
-  type        = string
-}
-
-variable "deployment_id" {
-  description = "Storage-profile UUID this scan_engine belongs to. Baked whole into every resource's fortidspm:deployment_id tag; its first 8 chars go into resource names. Combined with the region, this makes names deterministic and unique per deployment, so re-deploying the same profile into the same account is rejected on the duplicate IAM role name."
-  type        = string
-}
-
-variable "env_id" {
-  description = "control_service environment id (ENV_ID). Added as the fortidspm:env_id tag on every resource for ops searchability. Empty = tag omitted."
-  type        = string
-  default     = ""
+variable "report_deployment_status" {
+  description = "Tell FortiDSPM this region's scan engine was created, with its instance id, NAT public IP and IAM role. Sent only after the instance exists; an apply that fails earlier reports nothing."
+  type        = bool
+  default     = true
 }
 
 variable "enable_cloudtrail" {
@@ -47,7 +58,7 @@ variable "enable_cloudtrail" {
 }
 
 variable "account_id" {
-  description = "Optional AWS account ID guard. When set, terraform refuses to deploy unless the caller identity (aws_caller_identity) is in this account, so a bundle baked for one customer account cannot be applied against another. Empty = no guard. Fortinet bakes this into the bundle when the target account is known."
+  description = "AWS account the scan engines belong to. Registered with FortiCNAPP by the global module and enforced on every module: terraform refuses to deploy when the caller identity is a different account. Empty = the caller identity's account."
   type        = string
   default     = ""
 }

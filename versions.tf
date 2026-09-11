@@ -17,5 +17,9 @@ terraform {
       source  = "hashicorp/aws"
       version = ">= 5.0"
     }
+    lacework = {
+      source  = "lacework/lacework"
+      version = ">= 2.0"
+    }
   }
 }
