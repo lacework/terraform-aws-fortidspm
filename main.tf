@@ -257,6 +257,13 @@ data "aws_iam_policy_document" "scan_engine_s3" {
     actions   = ["sts:GetCallerIdentity"]
     resources = ["*"]
   }
+
+  statement {
+    sid       = "AccountInformation"
+    effect    = "Allow"
+    actions   = ["account:GetAccountInformation"]
+    resources = ["*"]
+  }
 }
 
 resource "aws_iam_role_policy" "scan_engine_s3" {
