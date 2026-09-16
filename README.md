@@ -24,69 +24,81 @@ The instance sits in the **private** subnet with no public IP by default.
 
 ## Usage
 
-The module takes the region from the provider passed to it and **declares no
-provider of its own**. Instantiate it once per region with an aliased provider,
-and one `terraform apply` covers every region in a single state.
+One module instance per region, each with its own aliased `aws` provider (the
+module declares no provider of its own). Exactly one instance sets
+`global = true`: it creates the `lacework_integration_aws_fortidspm` resource,
+which registers the account with FortiCNAPP and receives from FortiDSPM one
+single-use activation token and one AMI per region. The other instances take
+that module as `global_module_reference` and read their own region's token and
+AMI from it. One `terraform apply` covers every region in a single state.
 
 ```hcl
 terraform {
   required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
+    aws      = { source = "hashicorp/aws", version = "~> 5.0" }
+    lacework = { source = "lacework/lacework", version = "~> 2.0" }
   }
 }
+
+provider "lacework" {} # LW_ACCOUNT / LW_API_KEY / LW_API_SECRET from the environment
 
 provider "aws" {
   alias  = "us_west_2"
   region = "us-west-2"
 }
 
-module "scan_engine_us_west_2" {
-  source = "github.com/lacework/terraform-aws-fortidspm?ref=v0.1.0"
+provider "aws" {
+  alias  = "us_east_1"
+  region = "us-east-1"
+}
+
+module "lacework_aws_fortidspm_us_west_2" {
+  source = "git::https://github.com/lacework/terraform-aws-fortidspm.git?ref=v0.2.0"
+
+  global                    = true
+  lacework_integration_name = "aws-dspm-123456789012"
+  regions                   = ["us-west-2", "us-east-1"]
 
   providers = { aws = aws.us_west_2 }
+}
 
-  activation_token = var.activation_token_us_west_2  # from FortiDSPM, per region
-  ami_id           = var.ami_id_us_west_2            # from FortiDSPM, per region
-  aws_region       = "us-west-2"
+module "lacework_aws_fortidspm_us_east_1" {
+  source = "git::https://github.com/lacework/terraform-aws-fortidspm.git?ref=v0.2.0"
 
-  deployment_id   = "d-1a2b3c4d"
-  deployment_name = "aws-dspm-123456789012"
+  global_module_reference = module.lacework_aws_fortidspm_us_west_2
+
+  providers = { aws = aws.us_east_1 }
 }
 ```
 
-`activation_token` and `ami_id` are **per region** and are issued by FortiDSPM
-when the deployment is created. Everything else has a working default.
+The activation token is single-use. Rebuilding an instance needs a new token,
+which means a new integration: taint the module's
+`lacework_integration_aws_fortidspm` resource and apply again.
 
 ## Inputs
 
-Required:
-
 | Name | Description |
 |---|---|
-| `activation_token` | One-time JWT signed by FortiDSPM's control service, **specific to this region**. Delivered to the appliance through EC2 user-data and consumed on first boot. |
-| `ami_id` | BYOL AMI for this region. AMI ids are region-scoped, so each region gets its own. |
-| `aws_region` | The region this instance deploys into. Used for the S3 endpoint service name and in messages. |
-| `deployment_id` | Identifies the deployment. Takes part in resource naming, which keeps two deployments in one account apart. |
-| `deployment_name` | Human-readable name, applied as a tag. |
+| `global` | Create the FortiCNAPP DSPM integration in this instance. Exactly one instance per deployment. Default `false`. |
+| `global_module_reference` | The instance with `global = true`, passed whole (`module.<name>`). Required when `global = false`. |
+| `regions` | Every region a scan engine is deployed in, including this one. Global instance only. |
+| `lacework_integration_name` | Name of the FortiCNAPP DSPM integration. Global instance only. Default `aws-fortidspm`. |
+| `account_id` | AWS account the scan engines belong to. Empty = the caller identity's account. Terraform refuses to deploy from a different account. |
 
-Optional, with defaults: `account_id`, `env_id`, `enable_cloudtrail`,
-`vpc_cidr`, `public_subnet_cidr`, `private_subnet_cidr`, `enable_public_ip`,
-`office_ip`, `instance_type`, `root_volume_size`, `root_volume_type`,
-`log_volume_size`, `extra_tags`.
-
-Setting `account_id` turns on a precondition that refuses to apply unless the
-caller is in that account, so a bundle minted for one customer cannot be
-deployed into another.
-
-See `variables.tf` for the full descriptions and defaults.
+Optional, with defaults: `report_deployment_status` (tell FortiDSPM the region's
+scan engine is up, default `true`), `enable_cloudtrail`, `vpc_cidr`, `public_subnet_cidr`,
+`private_subnet_cidr`, `enable_public_ip`, `office_ip`, `instance_type`,
+`root_volume_size`, `root_volume_type`, `log_volume_size`, `extra_tags`.
+The region comes from the provider passed in.
 
 ## Outputs
 
-`instance_id`, `private_ip`, `public_ip`, `vpc_id`, `nat_gateway_public_ip`,
-`iam_role_arn`, `iam_role_name`, `security_group_id`.
+Per instance: `instance_id`, `private_ip`, `public_ip`, `vpc_id`,
+`nat_gateway_public_ip`, `iam_role_arn`, `iam_role_name`, `security_group_id`.
+
+Shared, read by the non-global instances through `global_module_reference`:
+`lacework_integration_guid`, `deployment_id`, `deployment_name`, `env_id`,
+`activation_tokens` (sensitive), `image_ids`.
 
 ## Notes
 

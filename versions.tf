@@ -17,5 +17,9 @@ terraform {
       source  = "hashicorp/aws"
       version = ">= 5.0"
     }
+    lacework = {
+      source  = "lacework/lacework"
+      version = ">= 2.6.0" # lacework_integration_*_fortidspm and lacework_fortidspm_deployment_status first shipped in 2.6.0
+    }
   }
 }

@@ -8,33 +8,50 @@
 # ---------------------------------------------------------------------------
 
 locals {
-  # Deterministic per-deploy name segment (no random suffix). region keeps the
-  # account-global IAM names (role, instance profile) from colliding across this
-  # bundle's regions — deployment_id is identical for every region — while
-  # deployment_id keeps two different deployments in the same account apart.
-  # Re-deploying the same deployment_id into the same account reuses these names,
-  # so the AWS API refuses the duplicate IAM role (EntityAlreadyExists) — an
-  # intentional guard against double-deploying the same storage profile.
-  #
-  # deployment_name is sanitized (lowercase, non-alphanumerics -> "-", trimmed)
-  # and capped at 15 chars so names stay within AWS limits; the FULL
-  # deployment_name / deployment_id go into tags below.
-  dep_name_clean = trim(replace(lower(var.deployment_name), "/[^a-z0-9]+/", "-"), "-")
+  region = data.aws_region.current.name
+
+  integration = var.global ? {
+    lacework_integration_guid = lacework_integration_aws_fortidspm.main[0].intg_guid
+    deployment_id             = lacework_integration_aws_fortidspm.main[0].deployment_id
+    deployment_name           = lacework_integration_aws_fortidspm.main[0].deployment_name
+    env_id                    = lacework_integration_aws_fortidspm.main[0].env_id
+    activation_tokens         = lacework_integration_aws_fortidspm.main[0].activation_tokens
+    image_ids                 = lacework_integration_aws_fortidspm.main[0].image_ids
+  } : var.global_module_reference
+
+  activation_token = lookup(local.integration.activation_tokens, local.region, "")
+  ami_id           = lookup(local.integration.image_ids, local.region, "")
+
+  dep_name_clean = trim(replace(lower(local.integration.deployment_name), "/[^a-z0-9]+/", "-"), "-")
   dep_name_short = trim(substr(local.dep_name_clean, 0, 15), "-")
-  dep_id_short   = substr(var.deployment_id, 0, 8)
-  name_suffix    = "${var.aws_region}-${local.dep_name_short}-${local.dep_id_short}"
+  dep_id_short   = substr(local.integration.deployment_id, 0, 8)
+  name_suffix    = "${local.region}-${local.dep_name_short}-${local.dep_id_short}"
 
   common_tags = merge({
     "fortidspm:role"            = "scan_engine"
     "fortidspm:managed"         = "terraform"
-    "fortidspm:deployment_name" = var.deployment_name
-    "fortidspm:deployment_id"   = var.deployment_id
-  }, var.env_id != "" ? { "fortidspm:env_id" = var.env_id } : {}, var.extra_tags)
+    "fortidspm:deployment_name" = local.integration.deployment_name
+    "fortidspm:deployment_id"   = local.integration.deployment_id
+  }, local.integration.env_id != "" ? { "fortidspm:env_id" = local.integration.env_id } : {}, var.extra_tags)
 }
 
-# Guard against deploying a bundle into the wrong account. When var.account_id
-# is baked by Fortinet, terraform refuses to apply unless the caller identity
-# is in that account (enforced via a precondition on the instance below).
+data "aws_region" "current" {}
+
+resource "lacework_integration_aws_fortidspm" "main" {
+  count = var.global ? 1 : 0
+
+  name       = var.lacework_integration_name
+  account_id = var.account_id != "" ? var.account_id : data.aws_caller_identity.current.account_id
+  regions    = var.regions
+
+  lifecycle {
+    precondition {
+      condition     = length(var.regions) > 0
+      error_message = "regions must list every region a scan engine is deployed in when global = true."
+    }
+  }
+}
+
 data "aws_caller_identity" "current" {}
 
 # ---------------------------------------------------------------------------
@@ -152,7 +169,7 @@ resource "aws_route_table_association" "private" {
 # Free S3 gateway endpoint — keeps bulk customer-S3 reads off the NAT gateway.
 resource "aws_vpc_endpoint" "s3" {
   vpc_id            = aws_vpc.main.id
-  service_name      = "com.amazonaws.${var.aws_region}.s3"
+  service_name      = "com.amazonaws.${local.region}.s3"
   vpc_endpoint_type = "Gateway"
   route_table_ids   = [aws_route_table.private.id]
 
@@ -240,6 +257,13 @@ data "aws_iam_policy_document" "scan_engine_s3" {
     actions   = ["sts:GetCallerIdentity"]
     resources = ["*"]
   }
+
+  statement {
+    sid       = "AccountInformation"
+    effect    = "Allow"
+    actions   = ["account:GetAccountInformation"]
+    resources = ["*"]
+  }
 }
 
 resource "aws_iam_role_policy" "scan_engine_s3" {
@@ -312,7 +336,7 @@ resource "aws_security_group" "scan_engine" {
 # ---------------------------------------------------------------------------
 
 resource "aws_instance" "scan_engine" {
-  ami           = var.ami_id
+  ami           = local.ami_id
   instance_type = var.instance_type
   # Default: private subnet, outbound-only via NAT. A public IP only works in an
   # IGW-routed subnet, so enable_public_ip moves the instance to the public
@@ -333,7 +357,7 @@ resource "aws_instance" "scan_engine" {
   # the attribute and start it again -- not a first boot -- so a rotated
   # activation_token would land in EC2 and never be read. Replacing the
   # instance is what gets the new token seeded.
-  user_data                   = var.activation_token
+  user_data                   = local.activation_token
   user_data_replace_on_change = true
 
   root_block_device {
@@ -379,5 +403,29 @@ resource "aws_instance" "scan_engine" {
       condition     = var.account_id == "" || data.aws_caller_identity.current.account_id == var.account_id
       error_message = "This bundle is baked for AWS account ${var.account_id}, but terraform is running as account ${data.aws_caller_identity.current.account_id}."
     }
+    precondition {
+      condition     = var.global || var.global_module_reference.lacework_integration_guid != ""
+      error_message = "Set global = true on exactly one module instance and pass it as global_module_reference to the others."
+    }
+    precondition {
+      condition     = local.activation_token != "" && local.ami_id != ""
+      error_message = "FortiDSPM issued no activation token or AMI for region ${local.region}; add it to the global instance's regions."
+    }
+  }
+}
+resource "lacework_fortidspm_deployment_status" "this" {
+  count = var.report_deployment_status ? 1 : 0
+
+  intg_guid     = local.integration.lacework_integration_guid
+  deployment_id = local.integration.deployment_id
+  status        = "succeeded"
+
+  region {
+    name                  = local.region
+    status                = "succeeded"
+    instance_id           = aws_instance.scan_engine.id
+    private_ip            = aws_instance.scan_engine.private_ip
+    nat_gateway_public_ip = aws_eip.nat.public_ip
+    iam_role_arn          = aws_iam_role.scan_engine.arn
   }
 }
