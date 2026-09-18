@@ -36,7 +36,7 @@ AMI from it. One `terraform apply` covers every region in a single state.
 terraform {
   required_providers {
     aws      = { source = "hashicorp/aws", version = "~> 5.0" }
-    lacework = { source = "lacework/lacework", version = "~> 2.0" }
+    lacework = { source = "lacework/lacework", version = ">= 2.6.0" }
   }
 }
 
@@ -74,6 +74,19 @@ module "lacework_aws_fortidspm_us_east_1" {
 The activation token is single-use. Rebuilding an instance needs a new token,
 which means a new integration: taint the module's
 `lacework_integration_aws_fortidspm` resource and apply again.
+
+## Examples
+
+Complete root modules, validated against this tag:
+
+- [`examples/single-region`](examples/single-region) — one region with the integration
+- [`examples/multi-region`](examples/multi-region) — the global instance plus a second region, sharing one integration
+
+Run one with the FortiCNAPP API key in the environment (`LW_ACCOUNT` may be the
+full account domain, `LW_SUBACCOUNT` names the sub-account for organisation
+accounts) and the cloud credentials the provider blocks expect, then
+`terraform init && terraform apply`. `terraform destroy` removes the scan
+engines, deletes the FortiCNAPP integration and notifies FortiDSPM.
 
 ## Inputs
 
