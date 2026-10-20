@@ -134,9 +134,9 @@ variable "root_volume_type" {
 }
 
 variable "log_volume_size" {
-  description = "Size in GiB of the secondary EBS volume used as the appliance's /data log disk. The appliance refuses to boot without it (drops into maintainer shell). Default 30 GiB matches the on-prem data.vmdk default; raise for production where logs accumulate."
+  description = "Size in GiB of the secondary EBS volume used as the appliance's /data log disk. The appliance refuses to boot without it (drops into maintainer shell). Default 512 GiB, sized for production where logs accumulate."
   type        = number
-  default     = 30
+  default     = 512
 }
 
 variable "extra_tags" {
