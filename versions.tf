@@ -5,9 +5,9 @@
 # that pinned an upper bound here would make any future root-side move to a
 # newer major version unsatisfiable.
 #
-# No `provider` block: the region comes from the aliased provider the root
-# passes in (providers = { aws = aws.<region_alias> }), which is what lets one
-# apply cover several regions at once.
+# No `provider` block: the region is var.region, set per resource (which needs
+# aws >= 6.0), so one apply covers several regions through a single provider.
+# An empty var.region falls back to the region of the provider the root passed in.
 
 terraform {
   required_version = ">= 1.2"
@@ -15,7 +15,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = ">= 5.0"
+      version = ">= 6.0" # resource-level `region` argument
     }
     lacework = {
       source  = "lacework/lacework"

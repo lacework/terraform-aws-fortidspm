@@ -24,18 +24,20 @@ The instance sits in the **private** subnet with no public IP by default.
 
 ## Usage
 
-One module instance per region, each with its own aliased `aws` provider (the
-module declares no provider of its own). Exactly one instance sets
-`global = true`: it creates the `lacework_integration_aws_fortidspm` resource,
-which registers the account with FortiCNAPP and receives from FortiDSPM one
-single-use activation token and one AMI per region. The other instances take
-that module as `global_module_reference` and read their own region's token and
-AMI from it. One `terraform apply` covers every region in a single state.
+One module instance per region, all sharing a single `aws` provider: each
+instance takes its region as `region`, and the module sets it on every regional
+resource (AWS provider >= 6.0). Exactly one instance sets `global = true`: it
+creates the `lacework_integration_aws_fortidspm` resource, which registers the
+account with FortiCNAPP and receives from FortiDSPM one single-use activation
+token and one AMI per region. The other instances take that module as
+`global_module_reference` and read their own region's token and AMI from it.
+One `terraform apply` covers every region in a single state, and terraform
+starts one provider process however many regions there are.
 
 ```hcl
 terraform {
   required_providers {
-    aws      = { source = "hashicorp/aws", version = "~> 5.0" }
+    aws      = { source = "hashicorp/aws", version = "~> 6.0" }
     lacework = { source = "lacework/lacework", version = ">= 2.6.0" }
   }
 }
@@ -43,33 +45,38 @@ terraform {
 provider "lacework" {} # LW_ACCOUNT / LW_API_KEY / LW_API_SECRET from the environment
 
 provider "aws" {
-  alias  = "us_west_2"
+  # Used for global calls (IAM, STS) and as the fallback region of any module
+  # instance that omits `region`, so always set `region` on each instance.
   region = "us-west-2"
 }
 
-provider "aws" {
-  alias  = "us_east_1"
-  region = "us-east-1"
-}
-
 module "lacework_aws_fortidspm_us_west_2" {
-  source = "git::https://github.com/lacework/terraform-aws-fortidspm.git?ref=v0.2.0"
+  source = "git::https://github.com/lacework/terraform-aws-fortidspm.git?ref=v0.4.0"
 
+  region                    = "us-west-2"
   global                    = true
   lacework_integration_name = "aws-dspm-123456789012"
   regions                   = ["us-west-2", "us-east-1"]
-
-  providers = { aws = aws.us_west_2 }
 }
 
 module "lacework_aws_fortidspm_us_east_1" {
-  source = "git::https://github.com/lacework/terraform-aws-fortidspm.git?ref=v0.2.0"
+  source = "git::https://github.com/lacework/terraform-aws-fortidspm.git?ref=v0.4.0"
 
+  region                  = "us-east-1"
   global_module_reference = module.lacework_aws_fortidspm_us_west_2
-
-  providers = { aws = aws.us_east_1 }
 }
 ```
+
+Roots written for v0.3.0 and earlier, with one aliased provider per region
+(`providers = { aws = aws.<region_alias> }`) and no `region` input, still apply:
+a null `region` falls back to the provider's region, and the explicit `region`
+the module now writes on each resource matches what the state already holds.
+Two things change for such a root: the module now needs `aws >= 6.0`, so a root
+pinned to `~> 5.0` (the earlier README's example) must move its constraint to
+6.x (and take the provider's v6 major upgrade) before `terraform init` passes;
+and if the root's provider carries `default_tags`, the plan shows those tags
+being added in place. Prefer the single-provider form for new roots: each
+aliased provider is a separate ~300 MiB process at plan time.
 
 The activation token is single-use. Rebuilding an instance needs a new token,
 which means a new integration: taint the module's
@@ -92,6 +99,7 @@ engines, deletes the FortiCNAPP integration and notifies FortiDSPM.
 
 | Name | Description |
 |---|---|
+| `region` | AWS region this scan engine is deployed in. Null = the region of the `aws` provider passed in (the pre-v0.4.0 aliased-provider form). Always set it in the single-provider form. |
 | `global` | Create the FortiCNAPP DSPM integration in this instance. Exactly one instance per deployment. Default `false`. |
 | `global_module_reference` | The instance with `global = true`, passed whole (`module.<name>`). Required when `global = false`. |
 | `regions` | Every region a scan engine is deployed in, including this one. Global instance only. |
@@ -102,7 +110,6 @@ Optional, with defaults: `report_deployment_status` (tell FortiDSPM the region's
 scan engine is up, default `true`), `enable_cloudtrail`, `vpc_cidr`, `public_subnet_cidr`,
 `private_subnet_cidr`, `enable_public_ip`, `office_ip`, `instance_type`,
 `root_volume_size`, `root_volume_type`, `log_volume_size`, `extra_tags`.
-The region comes from the provider passed in.
 
 ## Outputs
 

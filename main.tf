@@ -1,14 +1,18 @@
 # ---------------------------------------------------------------------------
 # scan_engine module — one isolated scan_engine stack in a single AWS region.
 #
-# The region is set by the provider the ROOT passes in (providers = { aws =
-# aws.<region_alias> }); this module never declares its own provider. The root
-# instantiates this module once per selected region, each with its own aliased
-# provider, so a single `terraform apply` deploys every region in one state.
+# The region is var.region, set on every regional resource and data source
+# (AWS provider >= 6.0 resource-level region). The root instantiates this module
+# once per selected region, all sharing ONE aws provider, so a single
+# `terraform apply` deploys every region in one state while terraform starts a
+# single provider process instead of one per region (each costs ~300 MiB, which
+# OOM-killed deployments of 20+ regions). When var.region is null the region
+# falls back to the provider's, so roots written for v0.3.0 and earlier (one
+# aliased provider per region) still apply once their aws constraint admits 6.x.
 # ---------------------------------------------------------------------------
 
 locals {
-  region = data.aws_region.current.name
+  region = coalesce(var.region, data.aws_region.current.region)
 
   integration = var.global ? {
     lacework_integration_guid = lacework_integration_aws_fortidspm.main[0].intg_guid
@@ -35,6 +39,7 @@ locals {
   }, local.integration.env_id != "" ? { "fortidspm:env_id" = local.integration.env_id } : {}, var.extra_tags)
 }
 
+# Fallback only: the region of the provider the root passed in.
 data "aws_region" "current" {}
 
 resource "lacework_integration_aws_fortidspm" "main" {
@@ -70,10 +75,12 @@ data "aws_caller_identity" "current" {}
 # ---------------------------------------------------------------------------
 
 data "aws_availability_zones" "available" {
-  state = "available"
+  region = local.region
+  state  = "available"
 }
 
 resource "aws_vpc" "main" {
+  region     = local.region
   cidr_block = var.vpc_cidr
   # DNS must be on or the appliance can't resolve the control_service ALB,
   # API Gateway, or S3 hostnames via the Amazon VPC resolver.
@@ -86,6 +93,7 @@ resource "aws_vpc" "main" {
 }
 
 resource "aws_internet_gateway" "main" {
+  region = local.region
   vpc_id = aws_vpc.main.id
   tags = merge(local.common_tags, {
     Name = "fortidspm-scan-engine-${local.name_suffix}"
@@ -93,6 +101,7 @@ resource "aws_internet_gateway" "main" {
 }
 
 resource "aws_subnet" "public" {
+  region            = local.region
   vpc_id            = aws_vpc.main.id
   cidr_block        = var.public_subnet_cidr
   availability_zone = data.aws_availability_zones.available.names[0]
@@ -103,6 +112,7 @@ resource "aws_subnet" "public" {
 }
 
 resource "aws_subnet" "private" {
+  region            = local.region
   vpc_id            = aws_vpc.main.id
   cidr_block        = var.private_subnet_cidr
   availability_zone = data.aws_availability_zones.available.names[0]
@@ -113,6 +123,7 @@ resource "aws_subnet" "private" {
 }
 
 resource "aws_eip" "nat" {
+  region = local.region
   domain = "vpc"
   tags = merge(local.common_tags, {
     Name = "fortidspm-scan-engine-${local.name_suffix}-nat"
@@ -120,6 +131,7 @@ resource "aws_eip" "nat" {
 }
 
 resource "aws_nat_gateway" "main" {
+  region        = local.region
   allocation_id = aws_eip.nat.id
   subnet_id     = aws_subnet.public.id
   tags = merge(local.common_tags, {
@@ -131,6 +143,7 @@ resource "aws_nat_gateway" "main" {
 }
 
 resource "aws_route_table" "public" {
+  region = local.region
   vpc_id = aws_vpc.main.id
 
   route {
@@ -144,6 +157,7 @@ resource "aws_route_table" "public" {
 }
 
 resource "aws_route_table" "private" {
+  region = local.region
   vpc_id = aws_vpc.main.id
 
   route {
@@ -157,17 +171,20 @@ resource "aws_route_table" "private" {
 }
 
 resource "aws_route_table_association" "public" {
+  region         = local.region
   subnet_id      = aws_subnet.public.id
   route_table_id = aws_route_table.public.id
 }
 
 resource "aws_route_table_association" "private" {
+  region         = local.region
   subnet_id      = aws_subnet.private.id
   route_table_id = aws_route_table.private.id
 }
 
 # Free S3 gateway endpoint — keeps bulk customer-S3 reads off the NAT gateway.
 resource "aws_vpc_endpoint" "s3" {
+  region            = local.region
   vpc_id            = aws_vpc.main.id
   service_name      = "com.amazonaws.${local.region}.s3"
   vpc_endpoint_type = "Gateway"
@@ -290,6 +307,7 @@ resource "aws_iam_instance_profile" "scan_engine" {
 # ---------------------------------------------------------------------------
 
 resource "aws_security_group" "scan_engine" {
+  region      = local.region
   name        = "fortidspm-scan-engine-${local.name_suffix}"
   description = "FortiData scan_engine - outbound HTTPS/WSS to Fortinet control plane and S3"
   vpc_id      = aws_vpc.main.id
@@ -336,6 +354,7 @@ resource "aws_security_group" "scan_engine" {
 # ---------------------------------------------------------------------------
 
 resource "aws_instance" "scan_engine" {
+  region        = local.region
   ami           = local.ami_id
   instance_type = var.instance_type
   # Default: private subnet, outbound-only via NAT. A public IP only works in an

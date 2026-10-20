@@ -7,6 +7,12 @@
 # AMI per region. Every other instance points global_module_reference at that
 # module and reads its own region's token and AMI from it.
 # ---------------------------------------------------------------------------
+variable "region" {
+  description = "AWS region this scan engine is deployed in, set on every regional resource (AWS provider >= 6.0). Null = the region of the aws provider passed in, for roots written for v0.3.0 and earlier (one aliased provider per region); those roots must allow aws 6.x. Omitting it on a single-provider root silently deploys into the provider's region."
+  type        = string
+  default     = null
+}
+
 variable "global" {
   description = "Create the FortiCNAPP DSPM integration in this module instance. Exactly one instance per deployment sets this."
   type        = bool
