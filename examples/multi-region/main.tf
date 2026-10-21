@@ -1,6 +1,6 @@
 terraform {
   required_providers {
-    aws      = { source = "hashicorp/aws", version = "~> 5.0" }
+    aws      = { source = "hashicorp/aws", version = "~> 6.0" }
     lacework = { source = "lacework/lacework", version = ">= 2.6.0" }
   }
 }
@@ -8,36 +8,29 @@ terraform {
 # LW_ACCOUNT / LW_SUBACCOUNT / LW_API_KEY / LW_API_SECRET from the environment.
 provider "lacework" {}
 
-# One aliased aws provider per region; the module takes its region from the provider.
+# One aws provider for every region: each module instance sets its own region
+# on its resources, so terraform runs a single provider process.
 provider "aws" {
-  alias  = "us_west_2"
   region = "us-west-2"
-}
-
-provider "aws" {
-  alias  = "us_east_1"
-  region = "us-east-1"
 }
 
 # The global instance registers the account with FortiCNAPP once, listing every
 # region, and receives one activation token and one AMI per region.
 module "lacework_aws_fortidspm_us_west_2" {
-  source = "git::https://github.com/lacework/terraform-aws-fortidspm.git?ref=v0.3.0"
+  source = "git::https://github.com/lacework/terraform-aws-fortidspm.git?ref=v0.4.0"
 
+  region                    = "us-west-2"
   global                    = true
   lacework_integration_name = "aws-dspm-multi-region"
   regions                   = ["us-west-2", "us-east-1"]
-
-  providers = { aws = aws.us_west_2 }
 }
 
 # Every other region reads its token and AMI from the global instance.
 module "lacework_aws_fortidspm_us_east_1" {
-  source = "git::https://github.com/lacework/terraform-aws-fortidspm.git?ref=v0.3.0"
+  source = "git::https://github.com/lacework/terraform-aws-fortidspm.git?ref=v0.4.0"
 
+  region                  = "us-east-1"
   global_module_reference = module.lacework_aws_fortidspm_us_west_2
-
-  providers = { aws = aws.us_east_1 }
 }
 
 output "lacework_integration_guid" {

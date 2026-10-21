@@ -1,6 +1,6 @@
 terraform {
   required_providers {
-    aws      = { source = "hashicorp/aws", version = "~> 5.0" }
+    aws      = { source = "hashicorp/aws", version = "~> 6.0" }
     lacework = { source = "lacework/lacework", version = ">= 2.6.0" }
   }
 }
@@ -9,18 +9,16 @@ terraform {
 provider "lacework" {}
 
 provider "aws" {
-  alias  = "us_west_2"
   region = "us-west-2"
 }
 
 module "lacework_aws_fortidspm_us_west_2" {
-  source = "git::https://github.com/lacework/terraform-aws-fortidspm.git?ref=v0.3.0"
+  source = "git::https://github.com/lacework/terraform-aws-fortidspm.git?ref=v0.4.0"
 
+  region                    = "us-west-2"
   global                    = true
   lacework_integration_name = "aws-dspm-us-west-2"
   regions                   = ["us-west-2"]
-
-  providers = { aws = aws.us_west_2 }
 }
 
 output "lacework_integration_guid" {
