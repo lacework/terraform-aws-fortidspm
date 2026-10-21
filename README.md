@@ -71,12 +71,12 @@ Roots written for v0.3.0 and earlier, with one aliased provider per region
 (`providers = { aws = aws.<region_alias> }`) and no `region` input, still apply:
 a null `region` falls back to the provider's region, and the explicit `region`
 the module now writes on each resource matches what the state already holds.
-Two things change for such a root: the module now needs `aws >= 6.0`, so a root
-pinned to `~> 5.0` (the earlier README's example) must move its constraint to
-6.x (and take the provider's v6 major upgrade) before `terraform init` passes;
-and if the root's provider carries `default_tags`, the plan shows those tags
-being added in place. Prefer the single-provider form for new roots: each
-aliased provider is a separate ~300 MiB process at plan time.
+Switching only the module source on such a root plans "No changes". One thing
+does change: the module now needs `aws >= 6.0`, so a root pinned to `~> 5.0`
+(the earlier README's example) must move its constraint to 6.x (and take the
+provider's v6 major upgrade) before `terraform init` passes. Prefer the
+single-provider form for new roots: each aliased provider is a separate
+~300 MiB process at plan time.
 
 The activation token is single-use. Rebuilding an instance needs a new token,
 which means a new integration: taint the module's
