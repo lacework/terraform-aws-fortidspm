@@ -112,12 +112,12 @@ variable "office_ip" {
 }
 
 variable "instance_type" {
-  description = "EC2 instance type for scan_engine. MUST be a Nitro-generation type (c5/m5/r5/c6i/m6i/r6i families or newer). Older Xen-generation types (m4/c4/c3/t2) do not boot correctly. Recommended at least m5.2xlarge (8 vCPU, 32 GiB) for production scanning workloads; c5.xlarge (4 vCPU, 8 GiB) is enough for activation smoke tests."
+  description = "EC2 instance type for scan_engine. Empty (default) = the first of m5.2xlarge, m6i.2xlarge, m7i.2xlarge (8 vCPU, 32 GiB, the production minimum) that the region offers, in an AZ that offers it. When set, MUST be a Nitro-generation type (c5/m5/r5/c6i/m6i/r6i families or newer); older Xen-generation types (m4/c4/c3/t2) do not boot correctly. c5.xlarge (4 vCPU, 8 GiB) is enough for activation smoke tests."
   type        = string
-  default     = "m5.2xlarge"
+  default     = ""
 
   validation {
-    condition     = can(regex("^(c5|m5|r5|c5n|c5d|m5d|r5d|c6i|m6i|r6i|c6a|m6a|r6a|c7i|m7i|r7i|t3|t3a)\\.[a-z0-9]+$", var.instance_type))
+    condition     = var.instance_type == "" || can(regex("^(c5|m5|r5|c5n|c5d|m5d|r5d|c6i|m6i|r6i|c6a|m6a|r6a|c7i|m7i|r7i|t3|t3a)\\.[a-z0-9]+$", var.instance_type))
     error_message = "instance_type must be a Nitro-generation type (c5/m5/r5/c6i/m6i/r6i/t3/... families). Older Xen-generation types (m4/c4/c3/t2) do not boot the FortiData BYOL AMI correctly."
   }
 }
