@@ -129,6 +129,14 @@ apart). Re-deploying the same `deployment_id` into the same account therefore
 fails on the duplicate IAM role, which is a deliberate guard against deploying
 the same storage profile twice.
 
+**The instance type and AZ are picked at plan time.** With `instance_type`
+empty, the module takes the first of `m5.2xlarge`, `m6i.2xlarge`, `m7i.2xlarge`
+that the region offers, and places both subnets in the first AZ offering it.
+m5 is missing from some regions (ap-east-2, ap-southeast-5/6/7, mx-central-1)
+and AZs (use1-az3), and AZ names map to different AZs in each account. A region
+offering none of them fails the plan before anything is created. The credentials
+running Terraform need `ec2:DescribeInstanceTypeOfferings`.
+
 **`activation_token` is single-use.** The appliance exchanges it for long-lived
 credentials the first time it boots. If the instance is ever rebuilt, ask
 FortiDSPM for a fresh token — reusing the spent one leaves the appliance

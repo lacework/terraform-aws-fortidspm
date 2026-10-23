@@ -77,6 +77,59 @@ data "aws_caller_identity" "current" {}
 data "aws_availability_zones" "available" {
   region = local.region
   state  = "available"
+
+  # Not Local or Wavelength Zones, which instance type offerings also list.
+  filter {
+    name   = "zone-type"
+    values = ["availability-zone"]
+  }
+}
+
+# Which candidate instance types each AZ offers. Not every region has m5
+# (ap-east-2, ap-southeast-5/6/7, mx-central-1), and not every AZ does
+# (use1-az3 has none of the candidates). AZ names map to different AZs in each
+# account, so names[0] alone can land on such an AZ for one customer and not
+# another. Read at plan time, so a region with no usable type fails before
+# anything is created.
+data "aws_ec2_instance_type_offerings" "scan_engine" {
+  region        = local.region
+  location_type = "availability-zone"
+
+  filter {
+    name   = "instance-type"
+    values = local.instance_type_candidates
+  }
+
+  lifecycle {
+    postcondition {
+      condition = anytrue([
+        for i, t in self.instance_types : contains(data.aws_availability_zones.available.names, self.locations[i])
+      ])
+      error_message = "No scan engine instance type is offered in ${local.region}: tried ${join(", ", local.instance_type_candidates)}. Deselect this region, or set instance_type to a type the region offers."
+    }
+  }
+}
+
+locals {
+  # Every candidate is 8 vCPU / 32 GiB, in the order they are tried. m5 first
+  # keeps deployments made before the selection on m5.2xlarge.
+  instance_type_candidates = var.instance_type != "" ? [var.instance_type] : ["m5.2xlarge", "m6i.2xlarge", "m7i.2xlarge"]
+
+  offerings = data.aws_ec2_instance_type_offerings.scan_engine
+  zone_instance_types = {
+    for az in data.aws_availability_zones.available.names :
+    az => [for i, t in local.offerings.instance_types : t if local.offerings.locations[i] == az]
+  }
+  # The first candidate offered in any AZ, then the first AZ (in names order,
+  # so names[0] when it offers the type, as before the selection) offering it.
+  instance_type = [
+    for t in local.instance_type_candidates : t
+    if anytrue([for az, types in local.zone_instance_types : contains(types, t)])
+  ][0]
+  availability_zone = [
+    for az in data.aws_availability_zones.available.names : az
+    if contains(local.zone_instance_types[az], local.instance_type)
+  ][0]
 }
 
 resource "aws_vpc" "main" {
@@ -104,7 +157,7 @@ resource "aws_subnet" "public" {
   region            = local.region
   vpc_id            = aws_vpc.main.id
   cidr_block        = var.public_subnet_cidr
-  availability_zone = data.aws_availability_zones.available.names[0]
+  availability_zone = local.availability_zone
 
   tags = merge(local.common_tags, {
     Name = "fortidspm-scan-engine-${local.name_suffix}-public"
@@ -115,7 +168,7 @@ resource "aws_subnet" "private" {
   region            = local.region
   vpc_id            = aws_vpc.main.id
   cidr_block        = var.private_subnet_cidr
-  availability_zone = data.aws_availability_zones.available.names[0]
+  availability_zone = local.availability_zone
 
   tags = merge(local.common_tags, {
     Name = "fortidspm-scan-engine-${local.name_suffix}-private"
@@ -356,7 +409,7 @@ resource "aws_security_group" "scan_engine" {
 resource "aws_instance" "scan_engine" {
   region        = local.region
   ami           = local.ami_id
-  instance_type = var.instance_type
+  instance_type = local.instance_type
   # Default: private subnet, outbound-only via NAT. A public IP only works in an
   # IGW-routed subnet, so enable_public_ip moves the instance to the public
   # subnet as well as assigning the IP — a public IP in the private subnet would
