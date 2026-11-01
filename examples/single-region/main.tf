@@ -13,7 +13,7 @@ provider "aws" {
 }
 
 module "lacework_aws_fortidspm_us_west_2" {
-  source = "git::https://github.com/lacework/terraform-aws-fortidspm.git?ref=v0.4.0"
+  source = "git::https://github.com/lacework/terraform-aws-fortidspm.git?ref=v0.5.0"
 
   region                    = "us-west-2"
   global                    = true
