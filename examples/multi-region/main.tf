@@ -17,7 +17,7 @@ provider "aws" {
 # The global instance registers the account with FortiCNAPP once, listing every
 # region, and receives one activation token and one AMI per region.
 module "lacework_aws_fortidspm_us_west_2" {
-  source = "git::https://github.com/lacework/terraform-aws-fortidspm.git?ref=v0.4.0"
+  source = "git::https://github.com/lacework/terraform-aws-fortidspm.git?ref=v0.5.0"
 
   region                    = "us-west-2"
   global                    = true
@@ -27,7 +27,7 @@ module "lacework_aws_fortidspm_us_west_2" {
 
 # Every other region reads its token and AMI from the global instance.
 module "lacework_aws_fortidspm_us_east_1" {
-  source = "git::https://github.com/lacework/terraform-aws-fortidspm.git?ref=v0.4.0"
+  source = "git::https://github.com/lacework/terraform-aws-fortidspm.git?ref=v0.5.0"
 
   region                  = "us-east-1"
   global_module_reference = module.lacework_aws_fortidspm_us_west_2
